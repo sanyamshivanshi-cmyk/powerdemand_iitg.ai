@@ -109,12 +109,11 @@ Importance is well spread across all 23 features — no single variable is doing
 - No autoregressive packages (ARIMA, Prophet)
 - Strictly chronological train/test split
 -  Zero data leakage all features computed from past data only
--  No extensive use of AI 
 
 ---
 
-*Submitted by - Shivanshi
+Submitted by - Shivanshi
 
 R. No - 250106066
 
-BSBE'29*
+BSBE'29
