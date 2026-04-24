@@ -1,98 +1,120 @@
-# Bangladesh Electricity Demand Forecasting
-## IITG.AI Recruitment Task
+# Predictive Paradox — Power Demand Forecasting
 
-## Objective --
+**IITG.ai Recruitment Task**
 
-The goal of this project is to predict **The next hour demand i.e. demand_mw** using historical consumption data, weather and economic indicators.
-
-## Dataset Description --
-
-The project uses three datasets that were provided:
-
-* **Electricity Demand Data:** Hourly records of power demand and generation
-* **Weather Data:** Temperature, humidity, and precipitation (hourly)
-* **Economic Data:** Annual macroeconomic indicators
-
-These datasets were aligned temporally to create a unified feature set for modeling.
-
-
-## Key Challenges
-
-* Representing time for non-sequential ML models
-* Preventing data leakage in time-based features
-* Handling extreme spikes in demand data
-* Integrating multi-frequency data (hourly + yearly)
+A machine learning pipeline to forecast the next hour's electricity demand on Bangladesh's national grid — built using only classical ML, no deep learning allowed.
 
 ---
 
-## Approach
+## My Results
 
-### Data Preparation
-
-* Converted timestamps to a consistent datetime format and fixed the duplicate and half hourly time stamps.
-* Removed anomalies using IQR-based outlier detection. On top of that, unrealistically low demands that could not be caught by IQR were also removed. 
-
-### Feature Engineering
-
-* **Time Features:** Hour, day of week, month, weekend indicator
-* **Cyclical Encoding:** Captured periodic patterns using sine/cosine transformations
-* **Lag Features:** Previous demand values to model temporal dependency
-* **Rolling Features:** Moving averages and variability to capture short-term trends
-* **External Features:** Integrated weather and economic indicators
-
-### Data Integrity
-
-* Strict chronological train-test split
-* All features constructed using past data only (no leakage)
-
-## Modeling
-
-The following models were trained and compared:
-
-* LightGBM
-* Random Forest
-* XGBoost
-
-LightGBM was selected as the final model due to its superior performance and efficiency.
+| Metric | Score |
+|--------|-------|
+| **MAPE** | 2.46% |
+| **R² Score** | 0.97 |
+| **MAE** | 273.9 MW |
+| **Best Model** | LightGBM |
 
 ---
 
-## 📈 Results
+## What's the problem?
 
-* **MAPE:** ~2.46%
-* **R² Score:** ~0.97
+Getting electricity demand forecasting wrong is costly in both directions — overestimate and you waste generation capacity, underestimate and the grid becomes unstable. The goal here is to predict `demand_mw` (next hour's grid demand) using historical demand, weather, and macroeconomic data.
 
-
-## Key Insights
-
-* Electricity demand shows strong dependence on recent values (lag features dominate)
-* Clear daily and seasonal consumption patterns exist
-* Weather conditions significantly influence demand levels
-
-
-## Limitations
-
-* Extreme demand spikes remain difficult to predict
-
-
-## Project Structure
-
-```
-electricity-demand-forecasting/
-│
-├── electricity_demand_forecasting.ipynb
-├── README.md
-├── requirements.txt
-```
+The catch: no LSTMs, no Transformers, no ARIMA, no Prophet. Classical ML only. That means I had to manually engineer everything that a sequential model would learn on its own — lags, rolling averages, cyclic time encodings — and bake the concept of "time" directly into the feature set.
 
 ---
 
-## ▶️ How to Run
+## Dataset
 
-1. Open the notebook
-2. Run all cells sequentially
-3. View predictions and evaluation metrics
+Three files were provided:
+
+| File | What it contains |
+|------|-----------------|
+| `PGCB_date_power_demand.xlsx` | Hourly demand & generation data — this is the target |
+| `weather_data.xlsx` | Hourly temperature, humidity, precipitation, cloud cover etc. |
+| `economic_full_1.csv` | Annual World Bank macroeconomic indicators for Bangladesh |
 
 ---
 
-Built as part of the *Predictive Paradox* recruitment task.
+## How I approached it
+
+### 1. Cleaning the data
+
+The raw PGCB dataset was messy — 432 duplicate timestamps from overlapping hourly and half-hourly readings. Instead of just dropping them, I did a weighted merge giving 2/3 weight to the on-the-hour reading and 1/3 to the half-hour reading. Missing timestamps after merging were filled with time-based interpolation.
+
+For outliers, the raw demand ranged from 6 MW to 117,000 MW — both completely unrealistic for Bangladesh's grid. I used IQR-based detection with a factor of 3 (wider than the usual 1.5, because the valid range itself is wide) plus a hard floor of 3,000 MW. Crucially, I replaced outliers with a 5-hour backward rolling mean rather than dropping them — dropping rows would create holes that break the lag features downstream.
+
+### 2. Feature Engineering
+
+This was the most important step. Since tree models see every row independently, I had to encode time explicitly:
+
+**Cyclic calendar features** — raw hour integers make hour 0 and hour 23 look far apart when they're actually adjacent. Sine/cosine encoding fixes that.
+
+**Bangladesh-specific flags** — Friday and Saturday are the weekend here, not Saturday/Sunday. Peak demand hours are 17:00–23:00 (confirmed by heatmap analysis). Monsoon months (June–October) consistently show higher demand.
+
+**Lag features** — the model's "memory":
+- `lag_1h`, `lag_2h`, `lag_3h` — recent history
+- `lag_24h` — same hour yesterday, captures daily seasonality
+
+**Rolling features** — `rolling_2h` and `rolling_6h` backward means to capture short-term trends.
+
+**Weather** — merged hourly on datetime. Temperature and humidity are big drivers of AC load.
+
+**Economic indicator** — `electric_power_consumption_per_capita` from World Bank, merged by year to capture long-term structural growth in demand.
+
+### 3. Train / Test Split
+
+| Split | Period | Rows |
+|-------|--------|------|
+| Train | 2015–2023 | 76,296 |
+| Test  | 2024 | 8,784 |
+
+Strictly chronological. The model never sees 2024 during training. Outlier bounds and weather interpolation were computed separately on train and test to prevent any cross-boundary leakage.
+
+### 4. Models
+
+Trained and compared three models:
+
+| Model | MAPE | R² |
+|-------|------|----|
+| **LightGBM** | **2.46%** | **0.97** |
+| XGBoost | 2.47% | ~0.97 |
+| Random Forest | higher | lower |
+
+LightGBM won by a thin margin. The near-identical scores between LightGBM and XGBoost suggest the feature set is doing most of the heavy lifting.
+
+---
+
+## What drives demand the most?
+
+Top features by importance:
+
+| Feature | Importance | Why it makes sense |
+|---------|------------|-------------------|
+| `lag_1h` | ~9% | Demand doesn't jump suddenly — the last hour is the best single predictor |
+| `temperature` | ~7.5% | AC load is a massive driver in Bangladesh summers |
+| `hour_sin` | ~7.5% | Time of day shapes everything |
+| `coal` | ~7% | Acts as a proxy for industrial/base load |
+| `lag_24h` | ~6.7% | Same-hour-yesterday patterns are strong |
+
+Importance is well spread across all 23 features — no single variable is doing all the work, which is a good sign.
+
+---
+
+## Constraints followed
+
+- Classical ML only (LightGBM, XGBoost, Random Forest)
+- No deep learning (LSTMs, Transformers)
+- No autoregressive packages (ARIMA, Prophet)
+- Strictly chronological train/test split
+-  Zero data leakage all features computed from past data only
+-  No extensive use of AI 
+
+---
+
+*Submitted by - Shivanshi
+
+R. No - 250106066
+
+BSBE'29*
